@@ -117,6 +117,7 @@ class GoogleAnalyticsStream(Stream):
     def _get_state_filter(self, context: Optional[dict]) -> str:
         state = self.get_context_state(context)
         state_bookmark = state.get("replication_key_value") or self.config["start_date"]
+        self.logger.info(f"State bookmark for {self.tap_stream_id}: {state_bookmark}")
         parsed = cast(datetime, parse(state_bookmark))
         parsed = parsed.replace(tzinfo=None)
         if parsed < datetime(2019, 1, 1):
@@ -146,6 +147,7 @@ class GoogleAnalyticsStream(Stream):
         finished = False
 
         state_filter = self._get_state_filter(context)
+        self.logger.info(f"Formatted state filter for {self.tap_stream_id}: {state_filter}")
         api_report_def = self._generate_report_definition(self.report)
         while not finished:
             resp = self._request_data(
@@ -242,6 +244,7 @@ class GoogleAnalyticsStream(Stream):
             The Analytics Reporting API V4 response.
 
         """
+        self.logger.info(f"Querying API for {self.tap_stream_id} with date range {state_filter} to {self.end_date}")
         request = RunReportRequest(
             property=f"properties/{self.property_id}",
             dimensions=report_definition["dimensions"],
