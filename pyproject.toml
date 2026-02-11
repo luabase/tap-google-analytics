@@ -12,7 +12,7 @@ license = "Apache 2.0"
 [tool.poetry.dependencies]
 python = ">=3.9,<3.12"  # Tested up to 3.11
 singer-sdk = "^0.46.0"
-google-analytics-data = "0.14.2"
+google-analytics-data = "~=0.18.8"
 
 [tool.poetry.dev-dependencies]
 pytest = "^7.2.1"
