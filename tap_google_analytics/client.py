@@ -15,6 +15,7 @@ from google.analytics.data_v1beta.types import (
 )
 from pendulum import parse
 from singer_sdk import typing as th
+from singer_sdk.exceptions import InvalidStreamSortException
 from singer_sdk.streams import Stream
 
 from tap_google_analytics.error import is_fatal_error
@@ -130,6 +131,10 @@ class GoogleAnalyticsStream(Stream):
         start_floor = cast(datetime, parse(self.config["start_date"]))
         start_floor = start_floor.replace(tzinfo=None)
         parsed = max(parsed, start_floor, datetime(2019, 1, 1))
+        # Remember this run's lower bound. Records on/after it are within the requested
+        # (lookback) window; anything older is genuinely out of order. Used by
+        # `_increment_stream_state` to tolerate the lookback overlap.
+        self._lookback_floor = parsed
         # state bookmarks need to be reformatted for API requests
         return datetime.strftime(parsed, "%Y-%m-%d")
 
@@ -295,6 +300,36 @@ class GoogleAnalyticsStream(Stream):
         last date pulled instead of discarding the run's progress.
         """
         return self.replication_key == "date"
+
+    def _increment_stream_state(
+        self, latest_record: dict, *, context: Optional[dict] = None
+    ) -> None:
+        """Advance incremental state, tolerating the intentional lookback overlap.
+
+        `check_sorted` stays on, so genuinely unsorted data still raises. But the
+        `lookback_days` window deliberately re-extracts dates older than the saved
+        bookmark, so the leading records of a run are smaller than the prior max and
+        trip `InvalidStreamSortException`. Swallow that exception only for records
+        inside the requested window (date >= this run's start_date floor); records
+        older than the floor are truly out of order and are re-raised. Swallowed
+        records simply don't advance the bookmark, so it stays at the max.
+        """
+        try:
+            super()._increment_stream_state(latest_record, context=context)
+        except InvalidStreamSortException:
+            floor = getattr(self, "_lookback_floor", None)
+            rk_value = latest_record.get(self.replication_key or "")
+            if floor is None or rk_value is None:
+                raise
+            if datetime.strptime(str(rk_value), "%Y%m%d") < floor:
+                raise
+            # Within the lookback window: an already-synced date re-pulled on purpose.
+            max_bookmark = self.get_context_state(context).get("replication_key_value")
+            self.logger.info(
+                f"{self.tap_stream_id}: lookback record {rk_value} is older than the "
+                f"max bookmark {max_bookmark} but within the lookback window; "
+                f"proceeding without advancing state."
+            )
 
     def get_records(self, context: Optional[dict]) -> Iterable[Dict[str, Any]]:
         """Return a generator of row-type dictionary objects.
