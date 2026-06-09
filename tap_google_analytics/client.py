@@ -9,6 +9,7 @@ import backoff
 from google.analytics.data_v1beta.types import (
     DateRange,
     Metric,
+    OrderBy,
     RunReportRequest,
     RunReportResponse,
 )
@@ -245,11 +246,23 @@ class GoogleAnalyticsStream(Stream):
 
         """
         self.logger.info(f"Querying API for {self.tap_stream_id} with date range {state_filter} to {self.end_date}")
+        # Order by the `date` dimension ascending so the SDK can finalize
+        # incremental state progressively (see `is_sorted`). Reports without a
+        # `date` dimension keep the API's default order.
+        order_bys = []
+        if self.replication_key == "date":
+            order_bys = [
+                OrderBy(
+                    dimension=OrderBy.DimensionOrderBy(dimension_name="date"),
+                    desc=False,
+                )
+            ]
         request = RunReportRequest(
             property=f"properties/{self.property_id}",
             dimensions=report_definition["dimensions"],
             metrics=report_definition["metrics"],
             date_ranges=[DateRange(start_date=state_filter, end_date=self.end_date)],
+            order_bys=order_bys,
             limit=self.page_size,
             offset=(pageToken or 0) * self.page_size,
         )
@@ -264,6 +277,17 @@ class GoogleAnalyticsStream(Stream):
             "number": th.NumberType(),
         }
         return mapping.get(string_type, th.StringType())
+
+    @property
+    def is_sorted(self) -> bool:
+        """Whether records are guaranteed to arrive in replication-key order.
+
+        Reports keyed on the `date` dimension are ordered by `date` ascending in
+        `_query_api`, so the SDK finalizes incremental state progressively during the
+        sync. This makes a mid-sync failure (e.g. a GA4 quota 429) resumable from the
+        last date pulled instead of discarding the run's progress.
+        """
+        return self.replication_key == "date"
 
     def get_records(self, context: Optional[dict]) -> Iterable[Dict[str, Any]]:
         """Return a generator of row-type dictionary objects.
