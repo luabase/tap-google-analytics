@@ -296,6 +296,19 @@ class GoogleAnalyticsStream(Stream):
         """
         return self.replication_key == "date"
 
+    @property
+    def check_sorted(self) -> bool:
+        """Whether to assert records never go backwards in replication-key order.
+
+        Disabled for date-keyed streams: the `lookback_days` window intentionally
+        re-extracts dates older than the last saved bookmark, so the first records of
+        a run are smaller than the prior max. With `check_sorted` on, the SDK would
+        raise `InvalidStreamSortException` on that expected overlap. `is_sorted` stays
+        True (state is still finalized progressively); since `_query_api` orders by
+        `date` ascending, the bookmark still advances to the max by end of stream.
+        """
+        return self.replication_key != "date"
+
     def get_records(self, context: Optional[dict]) -> Iterable[Dict[str, Any]]:
         """Return a generator of row-type dictionary objects.
 
