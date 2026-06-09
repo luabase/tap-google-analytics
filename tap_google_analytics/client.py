@@ -135,6 +135,8 @@ class GoogleAnalyticsStream(Stream):
         # (lookback) window; anything older is genuinely out of order. Used by
         # `_increment_stream_state` to tolerate the lookback overlap.
         self._lookback_floor = parsed
+        # Reset the once-per-run guard for the lookback-overlap log below.
+        self._lookback_overlap_logged = False
         # state bookmarks need to be reformatted for API requests
         return datetime.strftime(parsed, "%Y-%m-%d")
 
@@ -324,12 +326,18 @@ class GoogleAnalyticsStream(Stream):
             if datetime.strptime(str(rk_value), "%Y%m%d") < floor:
                 raise
             # Within the lookback window: an already-synced date re-pulled on purpose.
-            max_bookmark = self.get_context_state(context).get("replication_key_value")
-            self.logger.info(
-                f"{self.tap_stream_id}: lookback record {rk_value} is older than the "
-                f"max bookmark {max_bookmark} but within the lookback window; "
-                f"proceeding without advancing state."
-            )
+            # Log once per run per stream to avoid one line per overlapping record.
+            if not getattr(self, "_lookback_overlap_logged", False):
+                max_bookmark = self.get_context_state(context).get(
+                    "replication_key_value"
+                )
+                self.logger.info(
+                    f"{self.tap_stream_id}: lookback overlap — record {rk_value} is "
+                    f"older than the max bookmark {max_bookmark} but within the "
+                    f"lookback window; proceeding (further overlap records this run "
+                    f"are not logged)."
+                )
+                self._lookback_overlap_logged = True
 
     def get_records(self, context: Optional[dict]) -> Iterable[Dict[str, Any]]:
         """Return a generator of row-type dictionary objects.
