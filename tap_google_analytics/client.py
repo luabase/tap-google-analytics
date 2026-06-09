@@ -121,8 +121,15 @@ class GoogleAnalyticsStream(Stream):
         self.logger.info(f"State bookmark for {self.tap_stream_id}: {state_bookmark}")
         parsed = cast(datetime, parse(state_bookmark))
         parsed = parsed.replace(tzinfo=None)
-        if parsed < datetime(2019, 1, 1):
-            parsed = datetime(2019, 1, 1)
+        # Re-pull a lookback window before the bookmark to recapture GA4 data that
+        # is still being reprocessed (GA4 data can change for 24-48h). target-ducklake
+        # upserts on the date+dims PK, so re-pulled days are corrected, not duplicated.
+        lookback_days = self.config.get("lookback_days", 3)
+        parsed = parsed - timedelta(days=lookback_days)
+        # Never start earlier than the configured start_date or GA4's 2019 floor.
+        start_floor = cast(datetime, parse(self.config["start_date"]))
+        start_floor = start_floor.replace(tzinfo=None)
+        parsed = max(parsed, start_floor, datetime(2019, 1, 1))
         # state bookmarks need to be reformatted for API requests
         return datetime.strftime(parsed, "%Y-%m-%d")
 
